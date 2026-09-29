@@ -4,8 +4,8 @@ import { mockApiResponses, mockUserProfiles, generateMockChatResponse, simulateM
 let API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8172"
 const MOCK_DELAY = Number.parseInt(process.env.NEXT_PUBLIC_MOCK_DELAY || "1000")
 
-// Always start in mock mode
-let currentApiMode: ApiMode = "mock"
+// Always start in live mode
+let currentApiMode: ApiMode = "live"
 let currentBackendUrl: string = API_BASE_URL
 
 export type ApiMode = "live" | "mock"

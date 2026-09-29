@@ -102,7 +102,7 @@ export default function RetirementPlanningApp() {
   const [adminView, setAdminView] = useState<AdminView>("admin-dashboard")
   
   // Shared state
-  const [isMockMode, setIsMockMode] = useState(true)
+  const [isMockMode, setIsMockMode] = useState(false)
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null)
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showProfileBubble, setShowProfileBubble] = useState(false)
