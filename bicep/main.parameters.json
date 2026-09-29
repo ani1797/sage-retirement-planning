@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "value": "sage"
+    },
+    "envName": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "openAiLocation": {
+      "value": "eastus2"
+    },
+    "chatModelName": {
+      "value": "gpt-4.1"
+    },
+    "chatModelVersion": {
+      "value": "2025-04-14"
+    },
+    "deployRealtimeModel": {
+      "value": true
+    },
+    "realtimeModelName": {
+      "value": "gpt-realtime"
+    },
+    "realtimeModelVersion": {
+      "value": "2025-08-28"
+    }
+  }
+}
