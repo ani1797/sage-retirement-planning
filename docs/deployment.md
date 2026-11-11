@@ -1,5 +1,11 @@
 # Sage Retirement Planning - Deployment Guide
 
+> **Want a fully automated, self-sufficient Azure deployment?** See
+> **[docs/azure-deployment.md](./azure-deployment.md)** — a single script
+> (`bicep/scripts/deploy.sh`) provisions Azure OpenAI, storage, and both the
+> frontend and backend as Container Apps in one resource group, with no manual
+> Azure Portal steps.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

@@ -29,9 +29,13 @@ from storage import (
     ScenarioShareRecord,
 )
 
-# Azure OpenAI Assistants SDK imports
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from openai import AzureOpenAI
+# Foundry Agent Service integration (registers/runs the real Sage agent;
+# backs chat, the portfolio insight feature, and Voice Live)
+import foundry_agent
+
+# AI Insight feature: market data provider layer + metrics/prompt/cache
+import market_data
+import portfolio_insight
 
 # Azure AI Evaluation imports - handle optional dependency
 try:
@@ -61,9 +65,9 @@ except ImportError:
 load_dotenv()
 
 # Configuration
-azure_openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+foundry_project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT", "")
 model_deployment_name = os.environ.get("MODEL_DEPLOYMENT_NAME", "gpt-4")
-assistant_name = "sage-retirement-agent"
+foundry_agent_name = os.environ.get("FOUNDRY_AGENT_NAME", "sage-retirement-agent")
 azure_api_version = os.environ.get("AZURE_API_VERSION", "2025-01-01-preview")
 
 # Evaluation Configuration
@@ -71,20 +75,6 @@ ENABLE_EVALUATIONS = True  # Enable for agent evaluation feature
 
 # Data directory path
 DATA_DIR = Path(__file__).parent / "data"
-
-# Initialize Azure OpenAI client (Assistants API)
-if azure_openai_endpoint:
-    _credential = DefaultAzureCredential()
-    _token_provider = get_bearer_token_provider(
-        _credential, "https://cognitiveservices.azure.com/.default"
-    )
-    openai_client = AzureOpenAI(
-        azure_endpoint=azure_openai_endpoint,
-        api_version=azure_api_version,
-        azure_ad_token_provider=_token_provider,
-    )
-else:
-    openai_client = None
 
 # Load data from JSON files
 def load_user_profiles():
@@ -331,277 +321,88 @@ class ProfilesResponse(BaseModel):
 SAMPLE_PROFILES = load_user_profiles()
 INVESTMENT_PRODUCTS = load_investment_products()
 
-# Investment product catalogue
-def get_product_catalogue(risk: str = "medium") -> str:
-  """Query investment product catalogue by risk level."""
-  catalogue = INVESTMENT_PRODUCTS.get("products_by_risk", {}).get(risk, INVESTMENT_PRODUCTS.get("products_by_risk", {}).get("medium", []))
-  result = {"products": catalogue}
-  return json.dumps(result)
+# get_product_catalogue and SYSTEM_INSTRUCTIONS now live in foundry_agent.py,
+# the single source of truth shared by chat, insight, and voice.
 
-# System instructions for the AI agent
-SYSTEM_INSTRUCTIONS = """
-You are Sage, a retirement planning assistant. For every scenario request you must:
-1. Analyze the user's financial situation and retirement goals
-2. Calculate realistic projections using the provided data, using the code interpreter tool to calculate financial metrics.
-3. Return structured JSON that matches the AnalysisOutput schema EXACTLY. The schema is provided below.
-4. Provide actionable recommendations and product allocations, using the get_product_catalogue function to fetch investment products.
-5. Include follow-up questions and alternative scenarios
-
-ALWAYS use the code interpreter and product catalogue tools for data analysis and product recommendations.
-
-Use the get_product_catalogue function for investment product data.
-Always provide specific numbers and percentages in your analysis based on the output from the code interpreter tool.
-
-
-CRITICAL: Your response must be a single, well-formed JSON object with a schema that matches the sample AnalysisOutput below. Make sure retirement income is calculated accurately and is not zero.
-
-IMPORTANT: The "cashflows" array must contain objects with EXACTLY these two fields:
-- "year": integer (ONLY these six values in this order: 0, 5, 10, 15, 20, 25)
-- "end_assets": float (total assets at end of that year)
-
-CONSISTENCY REQUIREMENT:
-The cashflow array and metrics (especially metrics.time_horizon_years) must be calculated using the same logic and assumptions, based on the projected retirement income for the scenario. Asset depletion in the cashflow array must match the time horizon in the metrics. If other income sources (e.g., Social Security, pensions) are included in the retirement income, they must be reflected in both metrics and cashflow calculations.
-
-CRITICAL CASHFLOW HORIZON RULES (STRICT):
-1. Always produce a 25-year projection horizon represented by EXACTLY 6 cashflow points at 5-year intervals: years 0, 5, 10, 15, 20, 25.
-2. Do NOT include any years beyond 25 or intermediate years (e.g., no year 30, 1, 3, 7, etc.).
-3. Do NOT omit any required year; if assets are depleted earlier, continue listing the remaining required years with end_assets reflecting projected residual assets (can be 0 once depleted, never negative).
-4. Never output more or fewer than 6 cashflow objects. Never reorder the sequence.
-5. If you internally model annually, aggregate/record the end-of-period asset value for the specified 5-year checkpoints only.
-
-If the plan horizon is naturally shorter than 25 years (e.g., assets exhaust in year 18), you MUST still output points for 20 and 25 with end_assets equal to the projected value (0 if depleted). This consistency enables downstream visualization and comparison.
-
-Field semantics & sign conventions:
-Unless noted, deltas use: scenario - baseline (positive = improvement toward goal). EXCEPTION: retirement_income_delta = metrics.monthly_income - target_monthly_income (progress vs goal, not vs baseline). Target goal = scenario.target_monthly_income.
-
-metrics.monthly_income: Scenario projected sustainable monthly retirement income (whole dollars).
-metrics.success_rate_pct: Scenario probability (0-100) of meeting or exceeding target_monthly_income for the planned retirement horizon.
-metrics.risk_level: Qualitative risk classification for the scenario (e.g., low / medium / high).
-metrics.flexibility (optional): Short descriptor of withdrawal or adjustment flexibility.
-metrics.time_horizon_years: Scenario expected sustainable income duration (years until asset depletion or planned horizon).
-
-deltas.additional_savings_monthly: Extra monthly savings required for the scenario vs current plan (never negative; 0 if no increase needed).
-deltas.retirement_income_monthly: Baseline projected sustainable monthly retirement income BEFORE applying changes (absolute, non-negative; NOT a delta or shortfall figure).
-deltas.retirement_income_delta: Scenario progress vs target = metrics.monthly_income - target_monthly_income (positive = above target, negative = shortfall, 0 if within ±0.5). (This is the only delta not using scenario - baseline.)
-deltas.success_rate_delta_pct: Scenario success_rate_pct - baseline success rate (may be negative).
-deltas.extra_years_income_duration: metrics.time_horizon_years - baseline income duration (positive = longer, negative = shorter).
-
-Consistency rules (must hold after rounding; allow ±1 tolerance for percentage/year values due to rounding):
-retirement_income_delta = metrics.monthly_income - target_monthly_income
-success_rate_delta_pct = metrics.success_rate_pct - baseline_success_rate_pct
-extra_years_income_duration = metrics.time_horizon_years - baseline_income_duration_years
-additional_savings_monthly = max(0, scenario_monthly_savings - baseline_monthly_savings)
-
-Rounding:
-Currency to nearest whole dollar; percentages to nearest whole percent; years to nearest whole year. Clamp success_rate_pct to [0,100].
-
-Do not:
-- Invert signs.
-- Leave required numeric fields blank.
-- Use narrative text in numeric fields.
-
-Provide concise considerations explaining major negative deltas or trade-offs.
-
-Example JSON structure:
-{
-  "scenario": {
-    "id": "scenario_id",
-    "name": "User Name", 
-    "age": 40,
-    "current_cash": 50000,
-    "investment_assets": 230000,
-    "yearly_savings_rate": 0.15,
-    "salary": 96000,
-    "portfolio": {"stocks": 0.7, "bonds": 0.3},
-    "risk_appetite": "medium",
-    "target_retire_age": 65,
-    "target_monthly_income": 4000,
-    "description": "..."
-  },
-  "recommended_changes": {
-    "savings_rate": 0.20,
-    "portfolio_rebalancing": {"stocks": 0.65, "bonds": 0.35},
-    "additional_products": ["product1", "product2"]
-  },
-  "predictions": {
-        "metrics": {
-            "monthly_income": 4200,
-            "success_rate_pct": 85,
-            "risk_level": "medium",
-            "flexibility": "moderate",
-            "time_horizon_years": 25
-        },
-        "deltas": {
-            "additional_savings_monthly": 400,
-            "retirement_income_monthly": 4000,
-            "retirement_income_delta": 200,
-            "success_rate_delta_pct": 15,
-            "extra_years_income_duration": 3
-        },
-    "products": [
-      {
-        "name": "Balanced Portfolio",
-        "allocation": 0.6,
-        "exp_return": 0.07,
-        "risk_rating": "medium",
-        "asset_class": "mixed"
-      }
-    ],
-    "cashflows": [
-      {"year": 0, "end_assets": 280000},
-      {"year": 5, "end_assets": 450000},
-      {"year": 10, "end_assets": 620000},
-      {"year": 15, "end_assets": 780000},
-      {"year": 20, "end_assets": 920000},
-      {"year": 25, "end_assets": 1050000}
-    ]
-  },
-  "follow_ups": [
-    "What if I retired 2 years earlier?",
-    "How would a market crash affect my plan?"
-  ],
-  "alternatives": [
-    "Increasing savings rate to 20%",
-    "Considering more conservative portfolio"
-  ],
-  "considerations": "Your plan shows good fundamentals but consider increasing your emergency fund."
-}
-
-Do not include any explanatory text before or after the JSON. The JSON must be complete and valid.
-Each cashflow object must have ONLY "year" and "end_assets" fields - no other fields like "inflation" or "monthly_income".
-"""
-
-# Thread Management
+# ─── Thread shim over Foundry server-side conversations ─────────────────────
+# These four helpers preserve the exact call-site contract every LLM call
+# site in this file already depends on (thread.id, _add_message, etc.) while
+# delegating the actual run to foundry_agent.py's real registered agent.
 class ThreadManager:
-  def __init__(self, client: AzureOpenAI):
-      self.client = client
-      self.threads = {}
-  
+  def __init__(self):
+      self.sessions: Dict[str, str] = {}
+
   def get_or_create_thread(self, session_id: str) -> str:
-      if session_id not in self.threads:
-          thread = self.client.beta.threads.create()
-          self.threads[session_id] = thread.id
-      return self.threads[session_id]
-
-# ─── Tool definitions for the OpenAI Assistants API ──────────────────────────
-ASSISTANT_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_product_catalogue",
-            "description": "Query investment product catalogue by risk level.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "risk": {
-                        "type": "string",
-                        "description": "Risk level: low, medium, or high",
-                        "enum": ["low", "medium", "high"]
-                    }
-                },
-                "required": []
-            }
-        }
-    },
-    {"type": "code_interpreter"},
-]
+      if session_id not in self.sessions:
+          thread = _create_thread()
+          self.sessions[session_id] = thread.id
+      return self.sessions[session_id]
 
 
-def _handle_tool_calls(tool_calls) -> list:
-    """Process tool calls and return tool outputs list (dicts)."""
-    outputs = []
-    for tc in tool_calls:
-        if tc.function.name == "get_product_catalogue":
-            args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-            result = get_product_catalogue(args.get("risk", "medium"))
-            outputs.append({"tool_call_id": tc.id, "output": result})
-        else:
-            outputs.append({"tool_call_id": tc.id, "output": "{}"})
-    return outputs
+# conversation_id -> pending user input not yet sent (mirrors the old
+# in-memory THREADS dict's role, but the actual message history now lives
+# server-side in the Foundry conversation).
+_PENDING_INPUT: Dict[str, str] = {}
 
 
-def _run_assistant_sync(thread_id: str, assistant_id: str) -> str:
-    """Run assistant on a thread, handle tool calls, return accumulated text.
-    Works for all non-streaming endpoints."""
-    run = openai_client.beta.threads.runs.create_and_poll(
-        thread_id=thread_id,
-        assistant_id=assistant_id,
-    )
+def _create_thread():
+    """Create a new Foundry conversation. Returns an object with a `.id`
+    attribute to match the previous call-site shape."""
+    from types import SimpleNamespace
+    conversation_id = foundry_agent.create_conversation()
+    if conversation_id is None:
+        # Foundry unconfigured - fall back to a local id so callers still get
+        # a `.id` to pass around; run/stream calls will raise clearly.
+        conversation_id = str(uuid.uuid4())
+    return SimpleNamespace(id=conversation_id)
 
-    # Handle tool call loop
-    while run.status == "requires_action":
-        tool_outputs = _handle_tool_calls(
-            run.required_action.submit_tool_outputs.tool_calls
-        )
-        run = openai_client.beta.threads.runs.submit_tool_outputs_and_poll(
-            thread_id=thread_id,
-            run_id=run.id,
-            tool_outputs=tool_outputs,
-        )
 
-    if run.status != "completed":
-        raise RuntimeError(f"Run ended with status: {run.status} - {getattr(run, 'last_error', '')}")
+def _add_message(thread_id: str, role: str, content: str):
+    """Stage a user message to be sent on the next run/stream call."""
+    _PENDING_INPUT[thread_id] = content
 
-    # Retrieve the assistant's response
-    messages = openai_client.beta.threads.messages.list(
-        thread_id=thread_id, order="desc", limit=1
-    )
-    if messages.data and messages.data[0].content:
-        return messages.data[0].content[0].text.value
-    return ""
 
-# Initialize components
-thread_manager = ThreadManager(openai_client) if openai_client else None
+def _run_assistant_sync(thread_id: str, assistant_id: str = None) -> str:
+    """Run a turn against the registered Foundry agent and return the final
+    text. `assistant_id` is accepted for call-site compatibility but unused
+    (the conversation is already bound to the agent via extra_body)."""
+    user_input = _PENDING_INPUT.pop(thread_id, "")
+    return foundry_agent.run_agent(thread_id, user_input)
 
-# Assistant setup
+
+def _stream_chat_with_tools(thread_id: str):
+    """Generator: run a streaming turn against the registered Foundry agent.
+    Yields ("content", text_delta) and ("status", status_message) tuples --
+    the exact SSE contract the frontend already depends on."""
+    user_input = _PENDING_INPUT.pop(thread_id, "")
+    yield from foundry_agent.stream_agent(thread_id, user_input)
+
+
+thread_manager = ThreadManager()
+
+# Chat availability check
 def setup_assistant():
-  """Initialize or find the retirement planning assistant via OpenAI Assistants API"""
-  if openai_client is None:
-      print("AZURE_OPENAI_ENDPOINT not configured - skipping assistant initialization")
+  """Register the Sage prompt agent on Foundry Agent Service. Returns the
+  registered AgentVersionDetails (with .id/.name/.version), or None if
+  Foundry is unavailable/unconfigured -- in which case the backend starts in
+  limited mode: voice + data endpoints available, chat disabled."""
+  version = foundry_agent.register_agent()
+  if version is None:
       return None
+  from types import SimpleNamespace
+  return SimpleNamespace(id=version.name, name=version.name, version=version.version)
 
-  # Try to find existing assistant
-  try:
-      assistants = openai_client.beta.assistants.list(limit=100)
-      for a in assistants.data:
-          if a.name == assistant_name:
-              print(f"Found existing assistant '{assistant_name}' (id={a.id}), updating...")
-              updated = openai_client.beta.assistants.update(
-                  assistant_id=a.id,
-                  model=model_deployment_name,
-                  instructions=SYSTEM_INSTRUCTIONS,
-                  tools=ASSISTANT_TOOLS,
-              )
-              return updated
-  except Exception as e:
-      print(f"Could not list assistants: {e}")
-
-  # Create new assistant
-  try:
-      assistant = openai_client.beta.assistants.create(
-          model=model_deployment_name,
-          name=assistant_name,
-          instructions=SYSTEM_INSTRUCTIONS,
-          tools=ASSISTANT_TOOLS,
-      )
-      print(f"Created assistant '{assistant_name}' (id={assistant.id})")
-      return assistant
-  except Exception as e:
-      print(f"FATAL: Could not create assistant: {e}")
-      print("Backend will start in limited mode - voice endpoints available, chat disabled")
-      return None
-
-# Initialize assistant
+# Initialize chat availability
 try:
     agent = setup_assistant()
     if agent is None:
-        if not azure_openai_endpoint:
-            print("[INFO] Running in limited mode - AZURE_OPENAI_ENDPOINT not set")
+        if not foundry_project_endpoint:
+            print("[INFO] Running in limited mode - FOUNDRY_PROJECT_ENDPOINT not set")
         else:
-            print("[WARNING] Assistant initialization failed. Chat endpoints will not work.")
+            print("[WARNING] Chat initialization failed. Chat endpoints will not work.")
         print("[OK] Voice and data endpoints are available")
 except Exception as e:
-    print(f"[ERROR] FATAL ERROR during assistant setup: {e}")
+    print(f"[ERROR] FATAL ERROR during chat setup: {e}")
     print("Backend starting in emergency mode - only voice endpoints available")
     agent = None
 
@@ -649,6 +450,13 @@ def setup_evaluators():
 # Initialize evaluators only if evaluations are enabled
 if ENABLE_EVALUATIONS:
     evaluators, converter, model_config = setup_evaluators()
+    if evaluators is not None and converter is None:
+        print(
+            "[INFO] Agent-run evaluations are feature-gated off: AIAgentConverter "
+            "targets the classic azure.ai.agents SDK and has no equivalent for "
+            "Foundry Agent Service's Responses-API conversations yet. "
+            "evaluate_agent_run() will return {'error': 'Evaluations not configured'}."
+        )
 else:
     evaluators, converter, model_config = None, None, None
 
@@ -782,6 +590,8 @@ async def health():
       "status": "healthy",
       "agent_initialized": agent is not None,
       "agent_id": agent.id if agent is not None else None,
+      "agent_name": getattr(agent, "name", None),
+      "agent_version": getattr(agent, "version", None),
       "services": {
           "chat_endpoints": agent is not None,
           "voice_endpoints": True,
@@ -1092,12 +902,8 @@ async def generate_pre_meeting_brief_endpoint(request: PreMeetingBriefRequest):
             appointment_id=request.appointment_id,
         )
 
-        thread = openai_client.beta.threads.create()
-        openai_client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=f"SYSTEM CONTEXT:\n{system_prompt}\n\n---\n\n{user_message}",
-        )
+        thread = _create_thread()
+        _add_message(thread.id, "user", f"SYSTEM CONTEXT:\n{system_prompt}\n\n---\n\n{user_message}")
 
         raw = _run_assistant_sync(thread.id, agent.id)
 
@@ -1214,12 +1020,8 @@ async def generate_scenario_analysis_endpoint(request: ScenarioAnalysisRequest):
             client_summaries=client_summaries,
         )
 
-        thread = openai_client.beta.threads.create()
-        openai_client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=f"SYSTEM CONTEXT:\n{system_prompt}\n\n---\n\n{user_message}",
-        )
+        thread = _create_thread()
+        _add_message(thread.id, "user", f"SYSTEM CONTEXT:\n{system_prompt}\n\n---\n\n{user_message}")
 
         raw = _run_assistant_sync(thread.id, agent.id)
 
@@ -1294,14 +1096,10 @@ async def advisor_chat(request: AdvisorChatRequest):
         system_prompt = await _build_advisor_context(request.advisor_id)
 
         # Create a dedicated thread for this advisor conversation
-        thread = openai_client.beta.threads.create()
+        thread = _create_thread()
 
         # Send system context + user message
-        openai_client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=f"SYSTEM CONTEXT:\n{system_prompt}\n\n---\n\nADVISOR QUESTION:\n{request.message}",
-        )
+        _add_message(thread.id, "user", f"SYSTEM CONTEXT:\n{system_prompt}\n\n---\n\nADVISOR QUESTION:\n{request.message}")
 
         response_text = _run_assistant_sync(thread.id, agent.id)
 
@@ -1326,7 +1124,7 @@ async def advisor_chat_stream(request: AdvisorChatRequest):
         system_prompt = await _build_advisor_context(request.advisor_id)
 
         # Create a dedicated thread for this advisor conversation
-        thread = openai_client.beta.threads.create()
+        thread = _create_thread()
 
         # Build full message with history context
         history_text = ""
@@ -1340,11 +1138,7 @@ async def advisor_chat_stream(request: AdvisorChatRequest):
             full_message += f"CONVERSATION HISTORY:\n{history_text}\n---\n\n"
         full_message += f"ADVISOR QUESTION:\n{request.message}"
 
-        openai_client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=full_message,
-        )
+        _add_message(thread.id, "user", full_message)
 
         async def generate():
             accumulated = ""
@@ -1352,30 +1146,11 @@ async def advisor_chat_stream(request: AdvisorChatRequest):
             done_flag = {"done": False}
 
             def _stream_worker():
-                """Synchronous worker: streams assistant run, queues text chunks."""
+                """Synchronous worker: streams chat completion, queues text chunks."""
                 try:
-                    with openai_client.beta.threads.runs.stream(
-                        thread_id=thread.id, assistant_id=agent.id,
-                    ) as stream:
-                        for event in stream:
-                            if event.event == "thread.message.delta":
-                                for block in event.data.delta.content:
-                                    if hasattr(block, "text") and block.text:
-                                        chunks_queue.put_nowait(block.text.value)
-                            elif event.event == "thread.run.requires_action":
-                                tool_outputs = _handle_tool_calls(
-                                    event.data.required_action.submit_tool_outputs.tool_calls
-                                )
-                                with openai_client.beta.threads.runs.submit_tool_outputs_stream(
-                                    thread_id=thread.id,
-                                    run_id=event.data.id,
-                                    tool_outputs=tool_outputs,
-                                ) as tool_stream:
-                                    for te in tool_stream:
-                                        if te.event == "thread.message.delta":
-                                            for block in te.data.delta.content:
-                                                if hasattr(block, "text") and block.text:
-                                                    chunks_queue.put_nowait(block.text.value)
+                    for kind, payload in _stream_chat_with_tools(thread.id):
+                        if kind == "content":
+                            chunks_queue.put_nowait(payload)
                 except Exception as exc:
                     chunks_queue.put_nowait(None)  # signal error
                     print(f"Advisor stream error: {exc}")
@@ -1457,17 +1232,12 @@ async def chat_stream(request: ChatRequest):
       }
       
       # Send message to thread
-      openai_client.beta.threads.messages.create(
-          thread_id=thread_id,
-          role="user",
-          content=json.dumps(payload)
-      )
+      _add_message(thread_id, "user", json.dumps(payload))
       
       async def generate_stream():
           response_text = ""
           analysis_data = None
           status_queue = asyncio.Queue()
-          run_id_holder = {"run_id": None}
 
           async def _emit(status: str):
               await status_queue.put({
@@ -1477,49 +1247,18 @@ async def chat_stream(request: ChatRequest):
               })
 
           def _stream_worker():
-              """Synchronous worker that runs the assistant stream and queues status updates."""
+              """Synchronous worker that runs the chat completion stream and queues status updates."""
               accumulated = ""
-              try:
-                  asyncio.get_event_loop()  # Ensure loop ref for put_nowait
-              except RuntimeError:
-                  pass
-
               try:
                   status_queue.put_nowait({"type": "status", "data": {"status": "Analyzing your financial situation..."}, "timestamp": time.time()})
 
-                  with openai_client.beta.threads.runs.stream(
-                      thread_id=thread_id,
-                      assistant_id=agent.id,
-                  ) as stream:
-                      for event in stream:
-                          if event.event == "thread.run.created":
-                              run_id_holder["run_id"] = event.data.id
-                          elif event.event == "thread.message.delta":
-                              for block in event.data.delta.content:
-                                  if hasattr(block, "text") and block.text:
-                                      accumulated += block.text.value
-                          elif event.event == "thread.run.requires_action":
-                              status_queue.put_nowait({"type": "status", "data": {"status": "Fetching investment data..."}, "timestamp": time.time()})
-                              tool_outputs = _handle_tool_calls(
-                                  event.data.required_action.submit_tool_outputs.tool_calls
-                              )
-                              status_queue.put_nowait({"type": "status", "data": {"status": "Looking up investment products..."}, "timestamp": time.time()})
-                              with openai_client.beta.threads.runs.submit_tool_outputs_stream(
-                                  thread_id=thread_id,
-                                  run_id=event.data.id,
-                                  tool_outputs=tool_outputs,
-                              ) as tool_stream:
-                                  for te in tool_stream:
-                                      if te.event == "thread.message.delta":
-                                          for block in te.data.delta.content:
-                                              if hasattr(block, "text") and block.text:
-                                                  accumulated += block.text.value
-                                      elif te.event == "thread.run.step.created":
-                                          status_queue.put_nowait({"type": "status", "data": {"status": "Calculating retirement projections..."}, "timestamp": time.time()})
-                          elif event.event == "thread.run.step.created":
-                              status_queue.put_nowait({"type": "status", "data": {"status": "Calculating retirement projections..."}, "timestamp": time.time()})
-                          elif event.event == "thread.run.completed":
-                              status_queue.put_nowait({"type": "status", "data": {"status": "Generating personalized recommendations..."}, "timestamp": time.time()})
+                  for kind, payload_chunk in _stream_chat_with_tools(thread_id):
+                      if kind == "content":
+                          accumulated += payload_chunk
+                      elif kind == "status":
+                          status_queue.put_nowait({"type": "status", "data": {"status": payload_chunk}, "timestamp": time.time()})
+
+                  status_queue.put_nowait({"type": "status", "data": {"status": "Generating personalized recommendations..."}, "timestamp": time.time()})
 
               except Exception as exc:
                   print(f"Chat stream error: {exc}")
@@ -1662,10 +1401,7 @@ async def chat_stream(request: ChatRequest):
                   "response": "Analysis completed successfully" if analysis_data else "Analysis completed with issues",
                   "analysis": analysis_data.model_dump() if analysis_data else None,
                   "status": "completed" if analysis_data else "partial",
-                  "evaluation_context": {
-                      "thread_id": thread_id,
-                      "run_id": run_id_holder.get("run_id")
-                  } if run_id_holder.get("run_id") else None
+                  "evaluation_context": None
               },
               "timestamp": time.time()
           }
@@ -1705,11 +1441,7 @@ async def chat_endpoint(request: ChatRequest):
       }
       
       # Send message to thread
-      openai_client.beta.threads.messages.create(
-          thread_id=thread_id,
-          role="user",
-          content=json.dumps(payload)
-      )
+      _add_message(thread_id, "user", json.dumps(payload))
       
       # Run the assistant
       analysis_data = None
@@ -1950,13 +1682,8 @@ async def project_scenario(request: ScenarioProjectionRequest):
         )
         
         # Create a thread and run the projection
-        thread = openai_client.beta.threads.create()
-        
-        openai_client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=formatted_prompt
-        )
+        thread = _create_thread()
+        _add_message(thread.id, "user", formatted_prompt)
         
         response_text = _run_assistant_sync(thread.id, agent.id).strip()
         
@@ -1979,6 +1706,95 @@ async def project_scenario(request: ScenarioProjectionRequest):
         raise HTTPException(status_code=500, detail=f"Invalid projection format: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Projection failed: {str(e)}")
+
+
+# ─── AI Insight ──────────────────────────────────────────────────────────────
+
+class PortfolioInsightRequest(BaseModel):
+    profile_id: str
+    current_portfolio: Dict[str, Any]
+    force_refresh: bool = False
+
+
+@app.post("/api/portfolio-insight", response_model=portfolio_insight.PortfolioInsightResponse)
+async def get_portfolio_insight(request: PortfolioInsightRequest):
+    """Written AI review of a portfolio: factors for/against, a Sage AI Grade,
+    suitability verdict, and recommendations -- grounded in deterministic
+    metrics computed from the holdings plus resolved market context. Every
+    number in the response is computed in Python; the agent only writes
+    prose and judgment over the factual brief it's handed."""
+    if agent is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Chat service unavailable. Agent not initialized. Please check Foundry configuration."
+        )
+
+    try:
+        profile = next(
+            (p for p in SAMPLE_PROFILES if p.id == request.profile_id),
+            SAMPLE_PROFILES[0] if SAMPLE_PROFILES else None
+        )
+        if not profile:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
+        digest = portfolio_insight.portfolio_hash(request.current_portfolio)
+        if not request.force_refresh:
+            cached = portfolio_insight.get_cached_insight(request.profile_id, digest)
+            if cached is not None:
+                return portfolio_insight.PortfolioInsightResponse(**cached)
+
+        holdings = request.current_portfolio.get("holdings", []) or []
+        symbols = [h.get("symbol") for h in holdings if h.get("symbol")]
+        market_context = market_data.get_market_context(symbols, force_refresh=request.force_refresh)
+
+        metrics = portfolio_insight.compute_metrics(profile, request.current_portfolio, market_context)
+        formatted_prompt = portfolio_insight.build_insight_prompt(profile, request.current_portfolio, metrics, market_context)
+
+        thread = _create_thread()
+        _add_message(thread.id, "user", formatted_prompt)
+        response_text = _run_assistant_sync(thread.id, agent.id).strip()
+
+        json_start = response_text.find('{')
+        json_end = response_text.rfind('}') + 1
+        if json_start == -1 or json_end <= json_start:
+            raise HTTPException(status_code=500, detail="Failed to parse insight response")
+        insight_data = json.loads(response_text[json_start:json_end])
+
+        insight_data["metrics"] = metrics.model_dump()
+        insight_data["market_context"] = {
+            "provider": market_context.provider,
+            "funds": {k: v.model_dump() for k, v in market_context.funds.items()},
+            "macro": market_context.macro.model_dump(),
+        }
+        insight_data["data_sources"] = market_context.data_sources
+        insight_data["generated_at"] = portfolio_insight.now_iso()
+        insight_data["degraded"] = market_context.degraded
+        insight_data.setdefault("disclaimer", portfolio_insight.DISCLAIMER)
+
+        insight_response = portfolio_insight.PortfolioInsightResponse(**insight_data)
+        portfolio_insight.set_cached_insight(request.profile_id, digest, insight_response.model_dump())
+        return insight_response
+
+    except HTTPException:
+        raise
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse insight JSON: {str(e)}")
+    except ValidationError as e:
+        raise HTTPException(status_code=500, detail=f"Invalid insight format: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Portfolio insight failed: {str(e)}")
+
+
+@app.get("/api/market-context")
+async def get_market_context_diagnostic(symbols: str, force_refresh: bool = False):
+    """Diagnostic endpoint: resolved market context for a comma-separated
+    symbol list, so provider wiring can be verified without burning an agent
+    run. Also the cheapest smoke test for MARKET_DATA_PROVIDER changes."""
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not symbol_list:
+        raise HTTPException(status_code=400, detail="Provide at least one symbol via ?symbols=VTI,BND")
+    context = market_data.get_market_context(symbol_list, force_refresh=force_refresh)
+    return context.model_dump()
 
 
 @app.get("/scenarios")

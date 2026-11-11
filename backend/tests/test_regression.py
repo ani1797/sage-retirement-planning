@@ -20,12 +20,13 @@ REQUIRED_MODULES = [
     "uvicorn",
     "dotenv",        # python-dotenv
     "pydantic",
+    "azure.identity",
+    "azure.ai.projects",  # Foundry Agent Service SDK - required by foundry_agent.py
+    "azure.core",
 ]
 
 OPTIONAL_MODULES = [
-    ("azure.identity", "azure-identity"),
-    ("azure.ai.projects", "azure-ai-projects"),
-    ("azure.core", "azure-core"),
+    ("azure.ai.evaluation", "azure-ai-evaluation"),
 ]
 
 

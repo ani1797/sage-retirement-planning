@@ -1,4 +1,4 @@
-import { mockApiResponses, mockUserProfiles, generateMockChatResponse, simulateMockStreaming, generateMockProjection } from "./mockData"
+import { mockApiResponses, mockUserProfiles, generateMockChatResponse, simulateMockStreaming, generateMockProjection, generateMockPortfolioInsight } from "./mockData"
 
 // API Configuration
 let API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8172"
@@ -225,6 +225,147 @@ export interface ScenarioProjectionResponse {
   risks: (string | ScenarioRisk)[]
   opportunities: (string | ScenarioOpportunity)[]
   action_items?: ScenarioActionItem[]
+}
+
+// ─── AI Portfolio Insight ───────────────────────────────────────────────────
+
+export interface InsightFactorFor {
+  title: string
+  detail: string
+  weight: "high" | "medium" | "low"
+}
+
+export interface InsightFactorAgainst {
+  title: string
+  detail: string
+  severity: "high" | "medium" | "low"
+}
+
+export interface InsightGrade {
+  letter: "A" | "B" | "C" | "D" | "F"
+  score: number
+  rationale: string
+}
+
+export interface InsightSuitability {
+  verdict: "well_suited" | "mostly_suited" | "needs_adjustment" | "misaligned"
+  detail: string
+  risk_alignment: string
+  horizon_alignment: string
+  income_alignment: string
+}
+
+export interface InsightRecommendation {
+  action: string
+  priority: "high" | "medium" | "low"
+  category: "allocation" | "risk" | "cost" | "income" | "diversification"
+  rationale: string
+}
+
+export interface PortfolioMetrics {
+  total_value: number
+  holdings_count: number
+  weighted_expense_ratio: number
+  weighted_yield: number
+  equity_pct: number
+  bond_pct: number
+  cash_pct: number
+  intl_pct: number
+  real_estate_pct: number
+  top_sector: string
+  top_sector_pct: number
+  equity_vs_glidepath_delta: number
+  years_to_retirement: number
+  target_fund_gap: number
+}
+
+export interface FundProfile {
+  symbol: string
+  name: string
+  asset_class: string
+  category: string
+  expense_ratio: number
+  yield_pct: number
+  avg_return_5y_pct: number
+  net_assets_usd: number
+  top_sector: string
+  top_sector_pct: number
+  description: string
+  source: string
+  as_of: string
+}
+
+export interface MacroSnapshot {
+  treasury_10y_yield_pct: number
+  treasury_2y_yield_pct: number
+  fed_funds_rate_pct: number
+  cpi_yoy_pct: number
+  sp500_ytd_return_pct: number
+  source: string
+  as_of: string
+}
+
+export interface MarketContext {
+  provider: string
+  funds: Record<string, FundProfile>
+  macro: MacroSnapshot
+}
+
+export interface PortfolioInsightRequest {
+  profile_id: string
+  current_portfolio: {
+    total_value: number
+    holdings: Array<{
+      symbol: string
+      name: string
+      value: number
+      allocation: number
+      sector: string
+    }>
+  }
+  force_refresh?: boolean
+}
+
+export interface PortfolioInsightResponse {
+  headline: string
+  review: string[]
+  grade: InsightGrade
+  factors_for: InsightFactorFor[]
+  factors_against: InsightFactorAgainst[]
+  suitability: InsightSuitability
+  recommendations: InsightRecommendation[]
+  metrics: PortfolioMetrics
+  market_context: MarketContext
+  data_sources: string[]
+  generated_at: string
+  degraded: boolean
+  disclaimer: string
+}
+
+export const getPortfolioInsight = async (
+  request: PortfolioInsightRequest
+): Promise<PortfolioInsightResponse> => {
+  if (currentApiMode === "mock") {
+    await simulateDelay(1500) // Simulate AI processing time
+    return generateMockPortfolioInsight(request)
+  }
+
+  try {
+    const response = await makeApiCall("/api/portfolio-insight", {
+      method: "POST",
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    return await response.json()
+  } catch (error) {
+    throw new Error(
+      `Portfolio insight failed: ${error instanceof Error ? error.message : "Unknown error"}`
+    )
+  }
 }
 
 // Utility functions

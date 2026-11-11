@@ -430,6 +430,18 @@ export { simulateMockStreaming }
 // ─── Mock Scenario Projection ───────────────────────────────────────────────
 
 import type { ScenarioProjectionRequest, ScenarioProjectionResponse } from "./api"
+import type {
+  PortfolioInsightRequest,
+  PortfolioInsightResponse,
+  PortfolioMetrics,
+  FundProfile,
+  MacroSnapshot,
+  InsightFactorFor,
+  InsightFactorAgainst,
+  InsightGrade,
+  InsightSuitability,
+  InsightRecommendation,
+} from "./api"
 
 export function generateMockProjection(
   request: ScenarioProjectionRequest
@@ -649,6 +661,282 @@ function formatCurrency(amount: number): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount)
+}
+
+// ─── AI Portfolio Insight (mock) ────────────────────────────────────────────
+// Mirrors backend/data/market_reference.json so mock-mode metrics/prose stay
+// consistent with the real synthetic-provider output.
+const MOCK_FUND_PROFILES: Record<string, FundProfile> = {
+  VTI: { symbol: "VTI", name: "Vanguard Total Stock Market ETF", asset_class: "equity_us", category: "Large Blend", expense_ratio: 0.0003, yield_pct: 1.3, avg_return_5y_pct: 14.2, net_assets_usd: 1650000000000, top_sector: "Technology", top_sector_pct: 32.1, description: "Broad exposure to the entire U.S. stock market, from large-cap to small-cap.", source: "Sage Synthetic Reference Bundle", as_of: "2025-06-30" },
+  BND: { symbol: "BND", name: "Vanguard Total Bond Market ETF", asset_class: "bond", category: "Intermediate Core Bond", expense_ratio: 0.0003, yield_pct: 3.9, avg_return_5y_pct: 0.4, net_assets_usd: 340000000000, top_sector: "U.S. Treasury", top_sector_pct: 45.0, description: "Broad exposure to U.S. investment-grade bonds, including Treasuries, corporates, and mortgage-backed securities.", source: "Sage Synthetic Reference Bundle", as_of: "2025-06-30" },
+  VXUS: { symbol: "VXUS", name: "Vanguard Total International Stock ETF", asset_class: "equity_intl", category: "Foreign Large Blend", expense_ratio: 0.0005, yield_pct: 2.9, avg_return_5y_pct: 7.8, net_assets_usd: 480000000000, top_sector: "Financials", top_sector_pct: 19.4, description: "Broad exposure to developed and emerging international equity markets outside the U.S.", source: "Sage Synthetic Reference Bundle", as_of: "2025-06-30" },
+  VGT: { symbol: "VGT", name: "Vanguard Information Technology ETF", asset_class: "equity_us", category: "Technology", expense_ratio: 0.0009, yield_pct: 0.6, avg_return_5y_pct: 21.5, net_assets_usd: 90000000000, top_sector: "Technology", top_sector_pct: 98.5, description: "Concentrated exposure to U.S. technology companies including software, hardware, and semiconductor firms.", source: "Sage Synthetic Reference Bundle", as_of: "2025-06-30" },
+  VWO: { symbol: "VWO", name: "Vanguard FTSE Emerging Markets ETF", asset_class: "equity_intl", category: "Diversified Emerging Markets", expense_ratio: 0.0007, yield_pct: 2.7, avg_return_5y_pct: 5.1, net_assets_usd: 85000000000, top_sector: "Financials", top_sector_pct: 24.6, description: "Exposure to large- and mid-cap stocks in emerging market countries.", source: "Sage Synthetic Reference Bundle", as_of: "2025-06-30" },
+  VTIP: { symbol: "VTIP", name: "Vanguard Short-Term Inflation-Protected Securities ETF", asset_class: "bond", category: "Inflation-Protected Bond", expense_ratio: 0.0004, yield_pct: 2.0, avg_return_5y_pct: 2.6, net_assets_usd: 19000000000, top_sector: "U.S. Treasury (TIPS)", top_sector_pct: 100.0, description: "Short-duration U.S. Treasury Inflation-Protected Securities for real-return protection.", source: "Sage Synthetic Reference Bundle", as_of: "2025-06-30" },
+  VGSLX: { symbol: "VGSLX", name: "Vanguard Real Estate Index Fund Admiral Shares", asset_class: "real_estate", category: "Real Estate", expense_ratio: 0.0013, yield_pct: 3.5, avg_return_5y_pct: 5.9, net_assets_usd: 68000000000, top_sector: "Specialized REITs", top_sector_pct: 38.2, description: "Diversified exposure to U.S. real estate investment trusts (REITs).", source: "Sage Synthetic Reference Bundle", as_of: "2025-06-30" },
+  VMFXX: { symbol: "VMFXX", name: "Vanguard Federal Money Market Fund", asset_class: "cash", category: "Money Market", expense_ratio: 0.0011, yield_pct: 4.25, avg_return_5y_pct: 2.1, net_assets_usd: 300000000000, top_sector: "U.S. Government Repurchase Agreements", top_sector_pct: 60.0, description: "Cash-equivalent holdings of short-term U.S. government securities and repurchase agreements.", source: "Sage Synthetic Reference Bundle", as_of: "2025-06-30" },
+}
+
+const MOCK_MACRO_SNAPSHOT: MacroSnapshot = {
+  treasury_10y_yield_pct: 4.2,
+  treasury_2y_yield_pct: 4.0,
+  fed_funds_rate_pct: 4.5,
+  cpi_yoy_pct: 2.7,
+  sp500_ytd_return_pct: 6.2,
+  source: "Sage Synthetic Reference Bundle",
+  as_of: "2025-06-30",
+}
+
+function mockAssetClassFor(symbol: string, sector: string): string {
+  const known = MOCK_FUND_PROFILES[symbol]
+  if (known) return known.asset_class
+  const s = sector.toLowerCase()
+  if (s.includes("bond") || s.includes("fixed income") || s.includes("inflation")) return "bond"
+  if (s.includes("cash") || s.includes("money market")) return "cash"
+  if (s.includes("real estate") || s.includes("reit")) return "real_estate"
+  if (s.includes("international") || s.includes("emerging")) return "equity_intl"
+  return "equity_us"
+}
+
+export function generateMockPortfolioInsight(
+  request: PortfolioInsightRequest
+): PortfolioInsightResponse {
+  const { profile_id, current_portfolio } = request
+  const profile = mockUserProfiles.find((p) => p.id === profile_id) ?? mockUserProfiles[0]
+  const { holdings, total_value } = current_portfolio
+
+  let weightedExpenseRatio = 0
+  let weightedYield = 0
+  let equityPct = 0
+  let bondPct = 0
+  let cashPct = 0
+  let intlPct = 0
+  let realEstatePct = 0
+  let topSector = ""
+  let topSectorPct = 0
+
+  for (const h of holdings) {
+    const weight = total_value > 0 ? h.allocation / 100 : 0
+    const fund = MOCK_FUND_PROFILES[h.symbol]
+    weightedExpenseRatio += (fund?.expense_ratio ?? 0.0008) * weight
+    weightedYield += (fund?.yield_pct ?? 1.5) * weight
+
+    const assetClass = mockAssetClassFor(h.symbol, h.sector)
+    if (assetClass === "bond") bondPct += h.allocation
+    else if (assetClass === "cash") cashPct += h.allocation
+    else if (assetClass === "real_estate") realEstatePct += h.allocation
+    else {
+      equityPct += h.allocation
+      if (assetClass === "equity_intl") intlPct += h.allocation
+    }
+
+    if (h.allocation > topSectorPct) {
+      topSectorPct = h.allocation
+      topSector = h.sector
+    }
+  }
+
+  const yearsToRetirement = Math.max(0, profile.target_retire_age - profile.age)
+  const glidepathEquityTarget = Math.max(0, Math.min(100, 110 - profile.age))
+  const equityVsGlidepathDelta = +(equityPct - glidepathEquityTarget).toFixed(1)
+  const targetNestEgg = (profile.target_monthly_income * 12) / 0.04
+  const targetFundGap = Math.max(0, targetNestEgg - total_value)
+
+  const metrics: PortfolioMetrics = {
+    total_value,
+    holdings_count: holdings.length,
+    weighted_expense_ratio: +weightedExpenseRatio.toFixed(5),
+    weighted_yield: +weightedYield.toFixed(2),
+    equity_pct: +equityPct.toFixed(1),
+    bond_pct: +bondPct.toFixed(1),
+    cash_pct: +cashPct.toFixed(1),
+    intl_pct: +intlPct.toFixed(1),
+    real_estate_pct: +realEstatePct.toFixed(1),
+    top_sector: topSector,
+    top_sector_pct: +topSectorPct.toFixed(1),
+    equity_vs_glidepath_delta: equityVsGlidepathDelta,
+    years_to_retirement: yearsToRetirement,
+    target_fund_gap: +targetFundGap.toFixed(0),
+  }
+
+  const funds: Record<string, FundProfile> = {}
+  for (const h of holdings) {
+    funds[h.symbol] = MOCK_FUND_PROFILES[h.symbol] ?? {
+      symbol: h.symbol,
+      name: h.name,
+      asset_class: mockAssetClassFor(h.symbol, h.sector),
+      category: h.sector,
+      expense_ratio: 0.0008,
+      yield_pct: 1.5,
+      avg_return_5y_pct: 8.0,
+      net_assets_usd: 0,
+      top_sector: h.sector,
+      top_sector_pct: 100,
+      description: "Synthetic placeholder profile (symbol not in the curated reference bundle).",
+      source: "Sage Synthetic Reference Bundle (fallback)",
+      as_of: "2025-06-30",
+    }
+  }
+
+  const isConservative = profile.risk_appetite === "low"
+  const isAggressive = profile.risk_appetite === "high"
+  const equityGapAbs = Math.abs(equityVsGlidepathDelta)
+  const equityTooLow = equityVsGlidepathDelta < -5
+  const equityTooHigh = equityVsGlidepathDelta > 5
+
+  const score = Math.round(
+    Math.max(
+      45,
+      Math.min(
+        96,
+        88 -
+          equityGapAbs * 0.6 -
+          (metrics.weighted_expense_ratio > 0.002 ? 8 : 0) -
+          (targetFundGap > total_value ? 6 : 0) -
+          (topSectorPct > 45 ? 5 : 0)
+      )
+    )
+  )
+  const letter: InsightGrade["letter"] = score >= 90 ? "A" : score >= 78 ? "B" : score >= 65 ? "C" : score >= 50 ? "D" : "F"
+
+  const headline = equityTooLow
+    ? "Low-cost, diversified, but leaning conservative for the horizon"
+    : equityTooHigh
+    ? "Growth-oriented and low-cost, but volatility could run ahead of risk tolerance"
+    : "Well-balanced, low-cost portfolio broadly on track"
+
+  const review = [
+    `This is a ${holdings.length}-holding portfolio worth ${formatCurrency(total_value)} for a ${profile.age}-year-old with ${profile.risk_appetite} risk tolerance. The mix is ${metrics.equity_pct}% equity (${metrics.intl_pct}% international), ${metrics.bond_pct}% bonds, ${metrics.cash_pct}% cash, and ${metrics.real_estate_pct}% real estate, giving it several distinct return and defense engines rather than a single bet.`,
+    `Costs are ${metrics.weighted_expense_ratio < 0.001 ? "excellent" : metrics.weighted_expense_ratio < 0.003 ? "reasonable" : "on the higher side"}: the weighted expense ratio is ${(metrics.weighted_expense_ratio * 100).toFixed(3)}%. The largest single sector is ${metrics.top_sector} at ${metrics.top_sector_pct}% of assets${topSectorPct > 40 ? ", which is a meaningful concentration to be aware of" : ", which is a reasonable single-position weight"}.`,
+    `Versus the age-based 110-minus-age glidepath, equity exposure is ${equityVsGlidepathDelta >= 0 ? `${equityVsGlidepathDelta} points above` : `${Math.abs(equityVsGlidepathDelta)} points below`} the heuristic target, over a ${yearsToRetirement}-year horizon to the stated retirement age. ${targetFundGap > 0 ? `There is still a ${formatCurrency(targetFundGap)} gap to the 4%-rule nest-egg target implied by the $${profile.target_monthly_income}/month goal.` : "The portfolio has already reached the 4%-rule nest-egg target implied by the stated monthly income goal."}`,
+  ]
+
+  const factorsFor: InsightFactorFor[] = [
+    {
+      title: "Low fund costs",
+      detail: `The weighted expense ratio is only ${(metrics.weighted_expense_ratio * 100).toFixed(3)}%, which preserves more of the portfolio's return over time.`,
+      weight: metrics.weighted_expense_ratio < 0.001 ? "high" : "medium",
+    },
+    {
+      title: "Diversified asset mix",
+      detail: `The portfolio spans equity, bonds, cash, and real estate (${metrics.equity_pct}/${metrics.bond_pct}/${metrics.cash_pct}/${metrics.real_estate_pct}%), reducing reliance on any single asset class.`,
+      weight: "medium",
+    },
+  ]
+  if (metrics.intl_pct > 10) {
+    factorsFor.push({
+      title: "International diversification",
+      detail: `${metrics.intl_pct}% of the portfolio is allocated internationally, reducing dependence on U.S.-only equity outcomes.`,
+      weight: "medium",
+    })
+  }
+
+  const factorsAgainst: InsightFactorAgainst[] = []
+  if (targetFundGap > 0) {
+    factorsAgainst.push({
+      title: "Retirement income gap remains",
+      detail: `The portfolio is ${formatCurrency(targetFundGap)} short of the 4%-rule target nest egg needed to support the stated monthly income goal.`,
+      severity: targetFundGap > total_value ? "high" : "medium",
+    })
+  }
+  if (equityTooLow) {
+    factorsAgainst.push({
+      title: "Conservative equity posture",
+      detail: `Equity allocation is ${equityGapAbs} percentage points below the age-based glidepath, which may limit long-term growth over the ${yearsToRetirement}-year horizon.`,
+      severity: "medium",
+    })
+  }
+  if (equityTooHigh && !isAggressive) {
+    factorsAgainst.push({
+      title: "Equity exposure above risk tolerance",
+      detail: `Equity allocation is ${equityGapAbs} percentage points above the glidepath while the stated risk tolerance is ${profile.risk_appetite}, which may expose the portfolio to more volatility than intended.`,
+      severity: "medium",
+    })
+  }
+  if (topSectorPct > 45) {
+    factorsAgainst.push({
+      title: "Sector concentration",
+      detail: `${topSector} makes up ${topSectorPct}% of the portfolio, which is a meaningful single-sector concentration.`,
+      severity: "medium",
+    })
+  }
+  if (factorsAgainst.length === 0) {
+    factorsAgainst.push({
+      title: "Minor diversification refinement possible",
+      detail: "No material red flags were found; the portfolio could still benefit from routine rebalancing as markets drift.",
+      severity: "low",
+    })
+  }
+
+  const verdict: InsightSuitability["verdict"] =
+    equityGapAbs <= 5 && targetFundGap <= total_value * 0.5
+      ? "well_suited"
+      : equityGapAbs <= 12
+      ? "mostly_suited"
+      : "needs_adjustment"
+
+  const recommendations: InsightRecommendation[] = []
+  if (equityTooLow) {
+    recommendations.push({
+      action: "Consider increasing equity exposure gradually toward the age-based glidepath",
+      priority: "high",
+      category: "risk",
+      rationale: `Equity is currently ${equityGapAbs} points below the 110-minus-age benchmark, which may limit growth needed to close the retirement gap.`,
+    })
+  }
+  if (equityTooHigh && !isAggressive) {
+    recommendations.push({
+      action: "Consider trimming equity exposure toward the age-based glidepath",
+      priority: "medium",
+      category: "risk",
+      rationale: `Equity is currently ${equityGapAbs} points above the glidepath relative to a ${profile.risk_appetite} risk tolerance.`,
+    })
+  }
+  if (targetFundGap > 0) {
+    recommendations.push({
+      action: `Raise annual savings if possible to narrow the ${formatCurrency(targetFundGap)} nest-egg gap`,
+      priority: "high",
+      category: "income",
+      rationale: "The current portfolio still falls short of the 4%-rule target needed to support the stated monthly income goal.",
+    })
+  }
+  recommendations.push({
+    action: "Keep using low-cost index funds and monitor for fee creep",
+    priority: "low",
+    category: "cost",
+    rationale: `The ${(metrics.weighted_expense_ratio * 100).toFixed(3)}% weighted expense ratio is a meaningful long-term advantage worth preserving.`,
+  })
+
+  return {
+    headline,
+    review,
+    grade: {
+      letter,
+      score,
+      rationale: `The grade reflects ${(metrics.weighted_expense_ratio * 100).toFixed(3)}% costs, a ${equityGapAbs}-point equity-vs-glidepath gap, and ${targetFundGap > 0 ? `a remaining ${formatCurrency(targetFundGap)} nest-egg shortfall` : "an on-track nest-egg trajectory"}.`,
+    },
+    factors_for: factorsFor,
+    factors_against: factorsAgainst,
+    suitability: {
+      verdict,
+      detail: `The portfolio is ${verdict === "well_suited" ? "well aligned" : verdict === "mostly_suited" ? "mostly aligned" : "in need of some adjustment"} for a ${profile.age}-year-old with ${profile.risk_appetite} risk tolerance and a ${yearsToRetirement}-year horizon.`,
+      risk_alignment: `${isConservative ? "Conservative" : isAggressive ? "Aggressive" : "Medium"} risk tolerance vs. ${metrics.equity_pct}% equity / ${metrics.cash_pct}% cash allocation.`,
+      horizon_alignment: `${equityGapAbs <= 5 ? "Close to" : equityVsGlidepathDelta < 0 ? "Below" : "Above"} the age-based equity glidepath by ${equityGapAbs} percentage points.`,
+      income_alignment: targetFundGap > 0 ? `Not yet on track for the stated $${profile.target_monthly_income}/month target; ${formatCurrency(targetFundGap)} gap remains.` : `On track for the stated $${profile.target_monthly_income}/month target under the 4% rule.`,
+    },
+    recommendations,
+    metrics,
+    market_context: {
+      provider: "synthetic",
+      funds,
+      macro: MOCK_MACRO_SNAPSHOT,
+    },
+    data_sources: ["Sage Synthetic Reference Bundle"],
+    generated_at: new Date().toISOString(),
+    degraded: false,
+    disclaimer:
+      "This AI-generated insight is for educational purposes only and is not personalized financial, investment, or tax advice. Fund and market data are synthetic/illustrative unless otherwise noted. Consult a licensed financial advisor before making investment decisions.",
+  }
 }
 
 // Mock API responses

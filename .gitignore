@@ -39,6 +39,9 @@ build/
 # User data (conversations and scenarios)
 backend/data/user_data/
 
+# Market data / portfolio insight cache (regenerated locally)
+backend/data/cache/
+
 # Logs
 *.log
 server.log

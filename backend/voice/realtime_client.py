@@ -44,15 +44,31 @@ class AzureRealtimeClient:
         Initialize Azure Realtime Client
 
         Args:
-            endpoint: Azure OpenAI endpoint (defaults to AZURE_REALTIME_ENDPOINT env var)
+            endpoint: Azure endpoint. Accepts either a Foundry project endpoint
+                (``https://<resource>.services.ai.azure.com/api/projects/<project>``,
+                as used by FOUNDRY_PROJECT_ENDPOINT) or a plain resource endpoint
+                (``https://<resource>.services.ai.azure.com``, legacy
+                AZURE_REALTIME_ENDPOINT). The project name, if embedded in the
+                URL, is split out automatically since voicelive's `connect()`
+                takes them as separate keyword arguments.
             credential: Async Azure credential (defaults to DefaultAzureCredential)
-            deployment: Model deployment name (defaults to VOICE_MODEL_DEPLOYMENT env var)
+            deployment: Model deployment name (defaults to VOICE_MODEL_DEPLOYMENT env var).
+                Only used as a fallback when agent binding is not configured --
+                once bound to a Foundry agent, the model comes from the agent's
+                own registration.
             voice: Voice to use (alloy, echo, fable, onyx, nova, shimmer)
-            system_message: System prompt for the AI model
+            system_message: System prompt for the AI model. Only sent when not
+                agent-bound -- a bound agent supplies its own instructions.
         """
-        self.endpoint = endpoint or os.getenv("AZURE_REALTIME_ENDPOINT")
+        raw_endpoint = endpoint or os.getenv("FOUNDRY_PROJECT_ENDPOINT") or os.getenv("AZURE_REALTIME_ENDPOINT")
+        self.endpoint, endpoint_project_name = self._split_project_endpoint(raw_endpoint)
         self.credential = credential or DefaultAzureCredential()
         self.deployment = deployment or os.getenv("VOICE_MODEL_DEPLOYMENT", "gpt-4o-realtime-preview")
+        self.agent_name = os.getenv("FOUNDRY_AGENT_NAME")
+        self.project_name = os.getenv("FOUNDRY_PROJECT_NAME") or endpoint_project_name
+        # Bind to the registered Foundry agent whenever both are configured;
+        # otherwise fall back to the legacy direct-model connection.
+        self.use_agent_binding = bool(self.agent_name and self.project_name)
         self.voice = voice
         self.system_message = system_message or self._default_system_message()
 
@@ -87,6 +103,28 @@ class AzureRealtimeClient:
         # Track the last assistant response item_id for truncation on barge-in
         self._last_response_item_id: Optional[str] = None
 
+    @staticmethod
+    def _split_project_endpoint(raw_endpoint: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+        """Split a Foundry project endpoint into (resource_endpoint, project_name).
+
+        voicelive's ``connect()`` takes the plain resource endpoint
+        (``https://<resource>.services.ai.azure.com``) and the project name as
+        separate keyword arguments, whereas FOUNDRY_PROJECT_ENDPOINT (shared
+        with the AIProjectClient used elsewhere) is the full project URL
+        (``.../api/projects/<project>``). If no ``/api/projects/<name>``
+        suffix is present, the endpoint is returned unchanged with no project
+        name (legacy direct-model configuration).
+        """
+        if not raw_endpoint:
+            return raw_endpoint, None
+        marker = "/api/projects/"
+        idx = raw_endpoint.find(marker)
+        if idx == -1:
+            return raw_endpoint, None
+        resource_endpoint = raw_endpoint[:idx]
+        project_name = raw_endpoint[idx + len(marker):].strip("/")
+        return resource_endpoint, project_name or None
+
     def _default_system_message(self) -> str:
         return (
             "You are Sage, an AI retirement planning assistant. You provide helpful, "
@@ -102,18 +140,28 @@ class AzureRealtimeClient:
             True if connected successfully, False otherwise
         """
         if not self.endpoint:
-            raise ValueError("Azure endpoint must be provided via AZURE_REALTIME_ENDPOINT env var")
+            raise ValueError(
+                "Azure endpoint must be provided via FOUNDRY_PROJECT_ENDPOINT "
+                "(preferred) or the legacy AZURE_REALTIME_ENDPOINT env var"
+            )
 
         try:
-            print(f"Connecting to Azure Voice Live: {self.endpoint}")
-            print(f"Model: {self.deployment}, Voice: {self.voice}")
-
-            # Create and enter the async connection context
-            self._conn_ctx = connect(
-                endpoint=self.endpoint,
-                credential=self.credential,
-                model=self.deployment,
-            )
+            if self.use_agent_binding:
+                print(f"Connecting to Azure Voice Live: {self.endpoint} (agent={self.agent_name}, project={self.project_name})")
+                self._conn_ctx = connect(
+                    endpoint=self.endpoint,
+                    credential=self.credential,
+                    agent_name=self.agent_name,
+                    project_name=self.project_name,
+                )
+            else:
+                print(f"Connecting to Azure Voice Live: {self.endpoint}")
+                print(f"Model: {self.deployment}, Voice: {self.voice}")
+                self._conn_ctx = connect(
+                    endpoint=self.endpoint,
+                    credential=self.credential,
+                    model=self.deployment,
+                )
             self._conn = await self._conn_ctx.__aenter__()
 
             # Configure the session (voice, VAD, audio format, transcription)
@@ -152,18 +200,25 @@ class AzureRealtimeClient:
         else:
             print("Manual turn detection mode (no VAD)")
 
-        session = RequestSession(
+        session_kwargs = dict(
             modalities=[Modality.TEXT, Modality.AUDIO],
-            instructions=self.system_message,
             voice=self.voice,
             input_audio_format=InputAudioFormat.PCM16,
             output_audio_format=OutputAudioFormat.PCM16,
             turn_detection=turn_detection,
             input_audio_transcription=AudioInputTranscriptionOptions(model="whisper-1"),
         )
+        if not self.use_agent_binding:
+            # Legacy direct-model path: no agent to supply instructions, so
+            # send them explicitly on the session.
+            session_kwargs["instructions"] = self.system_message
+        session = RequestSession(**session_kwargs)
 
         await self._conn.session.update(session=session)
-        print(f"Session configured - Voice: {self.voice}")
+        if self.use_agent_binding:
+            print(f"Session configured - Voice: {self.voice} (instructions supplied by agent '{self.agent_name}')")
+        else:
+            print(f"Session configured - Voice: {self.voice}")
 
     async def _event_loop(self) -> None:
         """Background task: process events from Azure Voice Live connection"""

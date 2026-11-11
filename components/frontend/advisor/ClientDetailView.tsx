@@ -38,6 +38,8 @@ import {
   Skeleton
 } from "@/components/frontend/shared/UIComponents"
 import { generateClientSummary, getClientSharedScenarios } from "@/lib/advisorApi"
+import { getPortfolioData } from "@/lib/mockPortfolio"
+import { AIInsightSection } from "@/components/frontend/AIInsightSection"
 
 // â”€â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -1085,6 +1087,32 @@ export const ClientDetailView: React.FC<ClientDetailViewProps> = ({
           <div className="max-w-4xl space-y-4">
             <AISummaryCard client={client} isLoading={isLoading} advisorId={advisorId} isMockMode={isMockMode} />
             <FinancialSnapshot client={client} />
+            <AIInsightSection
+              profileId={client.id}
+              variant="compact"
+              currentPortfolio={(() => {
+                const portfolio = getPortfolioData({
+                  age: client.age,
+                  salary: client.salary,
+                  risk_appetite: client.risk_appetite,
+                  target_retire_age: client.target_retire_age,
+                  yearly_savings_rate: client.yearly_savings_rate,
+                  name: client.name,
+                  target_monthly_income: client.target_monthly_income,
+                  investment_assets: client.investment_assets,
+                })
+                return {
+                  total_value: portfolio.totalValue,
+                  holdings: portfolio.holdings.map((h) => ({
+                    symbol: h.symbol,
+                    name: h.name,
+                    value: h.value,
+                    allocation: h.allocation,
+                    sector: h.sector,
+                  })),
+                }
+              })()}
+            />
           </div>
         )}
         

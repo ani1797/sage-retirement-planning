@@ -7,6 +7,7 @@ Welcome to the Sage Retirement Planning documentation. This index helps you find
 - [Getting Started](#getting-started)
 - [Voice Mode](#voice-mode)
 - [Backend](#backend)
+- [AI Portfolio Insight](#ai-portfolio-insight)
 - [Deployment](#deployment)
 - [Environment Configuration](#environment-configuration)
 
@@ -95,7 +96,45 @@ AI agent evaluation system:
 
 ---
 
+### Foundry Agent Service
+**📄 [docs/foundry-agent.md](./foundry-agent.md)**
+
+The single registered Foundry Agent Service prompt agent backing chat, streaming, scenario analysis, Voice
+Live, and AI Insight:
+- Why one agent, not three separate integrations
+- The "one instructions block, many per-request prompts" pattern
+- Configuration, health check, evaluations, and local testing without Azure
+
+**Best for**: Backend developers, anyone adding a new agent-backed feature
+
+---
+
+## AI Portfolio Insight
+
+### Feature Design
+**📄 [docs/ai-insight.md](./ai-insight.md)**
+
+The written AI portfolio review shown in the client Portfolio view and advisor Client Detail overview tab:
+- Deterministic Python-computed metrics + LLM judgment/language split
+- Free-only market data providers (synthetic, Alpha Vantage, US Treasury) and the fallback chain
+- Why Morningstar, Moody's, FRED, and yfinance were deliberately excluded
+- Endpoints, frontend components, configuration, and tests
+
+**Best for**: Developers implementing or debugging the AI Insight feature
+
+---
+
 ## Deployment
+
+### Azure Deployment (Bicep, one-command)
+**📄 [docs/azure-deployment.md](./azure-deployment.md)**
+
+Fully automated, self-sufficient deployment to a single Azure resource group:
+- `bicep/` IaC for Container Apps, Azure OpenAI (chat + realtime voice), Storage, ACR, Log Analytics
+- `bicep/scripts/deploy.sh` — one command from empty subscription to live URL
+- `bicep/scripts/teardown.sh` — spin everything back down
+
+**Best for**: Getting a real, live, voice-enabled deployment fast
 
 ### Deployment Guide
 **📄 [docs/deployment.md](./deployment.md)**

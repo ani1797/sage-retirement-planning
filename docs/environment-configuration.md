@@ -65,10 +65,13 @@ NEXT_PUBLIC_DEBUG=false
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `PROJECT_ENDPOINT` | Azure AI project endpoint | `https://your-project.openai.azure.com` |
-| `MODEL_DEPLOYMENT_NAME` | GPT model deployment | `gpt-4` |
+| `FOUNDRY_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint (backs chat, voice, and AI insight) | `https://your-resource.services.ai.azure.com/api/projects/your-project` |
+| `FOUNDRY_AGENT_NAME` | Name the Foundry Agent Service agent is registered/looked up under | `sage-retirement-agent` |
+| `MODEL_DEPLOYMENT_NAME` | Model deployment backing the agent | `gpt-4o` |
 | `AZURE_REALTIME_ENDPOINT` | Voice API endpoint | `https://your-resource.openai.azure.com` |
 | `VOICE_MODEL_DEPLOYMENT` | Voice model deployment | `gpt-4o-realtime-preview` |
+
+See **[docs/foundry-agent.md](./foundry-agent.md)** for the full Foundry Agent Service architecture.
 
 ### Authentication (Choose ONE option)
 
@@ -89,7 +92,7 @@ The `DefaultAzureCredential` will automatically use your CLI credentials.
 ```bash
 # Create service principal first:
 az ad sp create-for-rbac --name "sage-app-sp" \
-  --role "Cognitive Services OpenAI User" \
+  --role "Azure AI User" \
   --scopes /subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<resource>
 
 # Then set these in backend/.env:
@@ -102,7 +105,22 @@ AZURE_CLIENT_SECRET=your-password
 
 **No environment variables needed!**
 
-Enable managed identity on your Azure resource (App Service, Container App, etc.) and assign the "Cognitive Services OpenAI User" role.
+Enable managed identity on your Azure resource (App Service, Container App, etc.) and assign the "Azure AI User" role.
+
+### AI Portfolio Insight — Market Data Configuration
+
+The AI Insight feature (written portfolio review) uses only free/no-cost market data sources — see
+**[docs/ai-insight.md](./ai-insight.md)** for the full design, including why Morningstar/Moody's/FRED/yfinance
+were deliberately excluded.
+
+| Variable | Description | Default | Options |
+|----------|-------------|---------|---------|
+| `MARKET_DATA_PROVIDER` | Which market data provider to use | `synthetic` | `synthetic`, `alphavantage`, `treasury` |
+| `ALPHAVANTAGE_API_KEY` | Free-tier Alpha Vantage key (only needed if provider is `alphavantage`) | _(unset)_ | Get one at alphavantage.co |
+| `MARKET_DATA_CACHE_TTL_HOURS` | How long resolved market data is cached on disk | `24` | Any number |
+| `PORTFOLIO_INSIGHT_CACHE_TTL_HOURS` | How long a generated insight is cached before regenerating | `24` | Any number |
+
+
 
 ### Voice Configuration
 
@@ -144,8 +162,10 @@ Enable managed identity on your Azure resource (App Service, Container App, etc.
 
 ```bash
 # backend/.env
-PROJECT_ENDPOINT=https://your-project.openai.azure.com
-MODEL_DEPLOYMENT_NAME=gpt-4
+FOUNDRY_PROJECT_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project
+FOUNDRY_AGENT_NAME=sage-retirement-agent
+MODEL_DEPLOYMENT_NAME=gpt-4o
+MARKET_DATA_PROVIDER=synthetic
 
 AZURE_REALTIME_ENDPOINT=https://your-resource.openai.azure.com
 VOICE_MODEL_DEPLOYMENT=gpt-4o-realtime-preview
@@ -165,8 +185,10 @@ LOG_LEVEL=DEBUG
 
 ```bash
 # backend/.env
-PROJECT_ENDPOINT=https://your-project.openai.azure.com
-MODEL_DEPLOYMENT_NAME=gpt-4
+FOUNDRY_PROJECT_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project
+FOUNDRY_AGENT_NAME=sage-retirement-agent
+MODEL_DEPLOYMENT_NAME=gpt-4o
+MARKET_DATA_PROVIDER=synthetic
 
 AZURE_REALTIME_ENDPOINT=https://your-resource.openai.azure.com
 VOICE_MODEL_DEPLOYMENT=gpt-4o-realtime-preview
@@ -189,8 +211,10 @@ LOG_LEVEL=INFO
 
 ```bash
 # backend/.env
-PROJECT_ENDPOINT=https://your-project.openai.azure.com
-MODEL_DEPLOYMENT_NAME=gpt-4
+FOUNDRY_PROJECT_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project
+FOUNDRY_AGENT_NAME=sage-retirement-agent
+MODEL_DEPLOYMENT_NAME=gpt-4o
+MARKET_DATA_PROVIDER=synthetic
 
 AZURE_REALTIME_ENDPOINT=https://your-resource.openai.azure.com
 VOICE_MODEL_DEPLOYMENT=gpt-4o-realtime-preview
@@ -281,7 +305,7 @@ cd backend
 
 # Check environment loading
 python -c "import os; from dotenv import load_dotenv; load_dotenv(); \
-  print('Endpoint:', os.getenv('PROJECT_ENDPOINT')); \
+  print('Foundry Endpoint:', os.getenv('FOUNDRY_PROJECT_ENDPOINT')); \
   print('Voice Endpoint:', os.getenv('AZURE_REALTIME_ENDPOINT'))"
 
 # Test Azure authentication
@@ -376,8 +400,10 @@ NEXT_PUBLIC_DEBUG=false
 
 ```bash
 # Azure OpenAI
-PROJECT_ENDPOINT=https://your-project.openai.azure.com
-MODEL_DEPLOYMENT_NAME=gpt-4
+FOUNDRY_PROJECT_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project
+FOUNDRY_AGENT_NAME=sage-retirement-agent
+MODEL_DEPLOYMENT_NAME=gpt-4o
+MARKET_DATA_PROVIDER=synthetic
 
 # Azure Voice Live
 AZURE_REALTIME_ENDPOINT=https://your-resource.openai.azure.com

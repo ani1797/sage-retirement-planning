@@ -7,6 +7,7 @@ import { projectScenario } from "@/lib/api"
 import { formatCurrency } from "@/lib/analysis"
 import { getPortfolioData, type PortfolioData } from "@/lib/mockPortfolio"
 import { ScenarioProjectionOverlay, DiffBadge } from "./ScenarioProjectionOverlay"
+import { AIInsightSection } from "./AIInsightSection"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -289,6 +290,30 @@ export const PortfolioView: React.FC<PortfolioViewProps> = ({
             ))}
           </div>
         </div>
+
+        {/* AI Portfolio Insight */}
+        {selectedProfile && (
+          <>
+            <AIInsightSection
+              profileId={selectedProfile.id}
+              currentPortfolio={{
+                total_value: portfolio.totalValue,
+                holdings: portfolio.holdings.map((h) => ({
+                  symbol: h.symbol,
+                  name: h.name,
+                  value: h.value,
+                  allocation: h.allocation,
+                  sector: h.sector,
+                })),
+              }}
+            />
+            {projectionMode && (
+              <p className="text-xs text-gray-400 -mt-3 px-1">
+                This insight reflects your current holdings, not the "What If" projection above.
+              </p>
+            )}
+          </>
+        )}
 
         {/* Holdings Table */}
         <div className={`bg-white rounded-2xl border overflow-hidden ${projectionMode && projection ? "border-indigo-200" : "border-gray-200/80"}`}>

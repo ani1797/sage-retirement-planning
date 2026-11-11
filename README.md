@@ -22,6 +22,12 @@ Speak with your AI retirement planning assistant using Azure Voice Live (gpt-4o-
 - See holding-level projections with allocation changes
 - Understand risks and opportunities for each scenario
 
+### 🧠 AI Portfolio Insight
+A written, grounded AI review of the current portfolio — factors in favor and against it, a suitability
+verdict, a "Sage AI Grade," and concrete recommendations — backed by deterministic Python-computed metrics
+(cost, diversification, age-based glidepath, retirement income gap) and free market data (no paid
+Morningstar/Moody's dependency). See [docs/ai-insight.md](./docs/ai-insight.md).
+
 ### ⏱️ Flexible Timeframes
 Project scenarios across 3-month, 6-month, or 12-month horizons with proportionally accurate results.
 
@@ -150,8 +156,11 @@ Comprehensive documentation is available in the [docs folder](./docs/):
 - **[⚡ Quick Start Guide](./docs/quickstart.md)** - Detailed setup instructions
 - **[🎙️ Voice Mode Setup](./docs/voice/setup.md)** - Configure voice chat with Azure Voice Live
 - **[🔐 Voice Authentication](./docs/voice/authentication.md)** - AAD authentication guide
+- **[🤖 Foundry Agent Service](./docs/foundry-agent.md)** - The registered agent backing chat, voice, and insight
+- **[🧠 AI Portfolio Insight](./docs/ai-insight.md)** - Written AI portfolio review feature design
 - **[⚙️ Environment Config](./docs/environment-configuration.md)** - Complete environment variable reference
 - **[🚀 Deployment Guide](./docs/deployment.md)** - Production deployment
+- **[☁️ Azure Deployment (Bicep, one-command)](./docs/azure-deployment.md)** - Deploy the full stack (frontend, backend, Azure OpenAI, storage) to Azure with `bicep/scripts/deploy.sh`
 - **[🔧 Backend README](./docs/backend/README.md)** - Backend-specific documentation
 
 ---

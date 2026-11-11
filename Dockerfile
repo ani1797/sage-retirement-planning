@@ -7,8 +7,9 @@ WORKDIR /app
 COPY package*.json ./
 COPY pnpm-lock.yaml* ./
 
-# Install dependencies
-RUN npm install -g pnpm && pnpm install
+# Install dependencies (pin pnpm major to match the committed lockfile version and
+# avoid newer pnpm's default build-script sandboxing, which blocks native deps like sharp)
+RUN npm install -g pnpm@9 && pnpm install
 
 # Copy source code
 COPY . .
